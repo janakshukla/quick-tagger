@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData, useSubmit, useSearchParams } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -13,6 +13,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const cursor = url.searchParams.get("cursor");
   const direction = url.searchParams.get("direction");
 
+  // Pagination Logic
   let paginationArgs = `first: 5`;
   if (direction === "next" && cursor) {
     paginationArgs = `first: 5, after: "${cursor}"`;
@@ -20,6 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     paginationArgs = `last: 5, before: "${cursor}"`;
   }
 
+  // Search Logic (Sanitized, no leading wildcards)
   const safeSearch = q.replace(/"/g, ''); 
   const queryArg = safeSearch ? `, query: "title:${safeSearch}*"` : "";
 
@@ -59,7 +61,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   
   const productId = formData.get("productId");
   const intent = formData.get("intent"); 
-  const tagValue = formData.get("tagValue") as string; // We now receive the custom tag
+  const tagValue = formData.get("tagValue") as string; 
 
   if (!tagValue) return { error: "Tag is required" };
 
@@ -96,9 +98,12 @@ export default function Index() {
   const [searchInput, setSearchInput] = useState(searchTerm);
 
   // State for the Modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
-  const [customTagInput, setCustomTagInput] = useState("");
+  const [tagInputValue, setTagInputValue] = useState("");
+  const tagInputRef = useRef<HTMLInputElement>(null);
 
+  // Success Notification
   useEffect(() => {
     if (fetcher.data?.success) {
       const actionWord = fetcher.data.intent === "add" ? "added" : "removed";
@@ -106,30 +111,30 @@ export default function Index() {
     }
   }, [fetcher.data, shopify]);
 
-  // Modal Handlers
+  // --- MODAL HANDLERS ---
   const handleOpenModal = (productId: string) => {
     setActiveProductId(productId);
-    setCustomTagInput("");
-    shopify.modal.show("custom-tag-modal");
+    setTagInputValue("");
+    setIsModalOpen(true);
   };
 
   const handleCloseModal = () => {
-    shopify.modal.hide("custom-tag-modal");
+    setIsModalOpen(false);
     setActiveProductId(null);
-    setCustomTagInput("");
+    setTagInputValue("");
   };
 
-  // Add Tag Action
   const handleSaveCustomTag = () => {
-    if (!customTagInput.trim() || !activeProductId) return;
+    if (!tagInputValue.trim() || !activeProductId) return;
+    
     fetcher.submit(
-      { productId: activeProductId, intent: "add", tagValue: customTagInput.trim() }, 
+      { productId: activeProductId, intent: "add", tagValue: tagInputValue.trim() }, 
       { method: "POST" }
     );
     handleCloseModal();
   };
 
-  // Remove Specific Tag Action
+  // --- INLINE ACTION HANDLERS ---
   const handleRemoveTag = (productId: string, tagValue: string) => {
     fetcher.submit(
       { productId, intent: "remove", tagValue }, 
@@ -137,7 +142,6 @@ export default function Index() {
     );
   };
 
-  // Pagination Handler
   const paginate = (direction: "next" | "prev") => {
     const currentQ = searchParams.get("q") || "";
     const cursor = direction === "next" ? pageInfo.endCursor : pageInfo.startCursor;
@@ -149,7 +153,7 @@ export default function Index() {
       <s-section heading="Manage Custom Tags">
         <s-paragraph>Search products and apply your own custom tags.</s-paragraph>
         
-        {/* Search Bar */}
+        {/* Search Bar Area */}
         <s-box paddingBlockEnd="base">
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
             <input 
@@ -243,32 +247,99 @@ export default function Index() {
 
       </s-section>
 
-      {/* The Native App Bridge Modal for Custom Tags */}
-      <ui-modal id="custom-tag-modal">
-        <div style={{ padding: '24px' }}>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
-            Tag Name
-          </label>
-          <input
-            type="text"
-            value={customTagInput}
-            onChange={(e) => setCustomTagInput(e.target.value)}
-            placeholder="e.g., Summer Sale, Premium, Wholesale"
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleSaveCustomTag();
-              }
+      {/* Modal Overlay */}
+      {isModalOpen && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            pointerEvents: 'auto'
+          }}
+          onClick={handleCloseModal}
+        >
+          {/* Modal Content */}
+          <div 
+            style={{
+              background: 'white',
+              borderRadius: '8px',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+              width: '90%',
+              maxWidth: '400px',
+              pointerEvents: 'auto'
             }}
-            autoFocus
-          />
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: '24px' }}>
+              <label style={{ display: 'block', marginBottom: '12px', fontWeight: 'bold', fontSize: '16px' }}>
+                Tag Name
+              </label>
+              <input
+                type="text"
+                ref={tagInputRef}
+                value={tagInputValue}
+                onChange={(e) => setTagInputValue(e.target.value)}
+                placeholder="e.g., Summer Sale, Premium, Wholesale"
+                style={{ 
+                  width: '100%', 
+                  padding: '10px', 
+                  borderRadius: '4px', 
+                  border: '1px solid #ccc',
+                  fontSize: '14px',
+                  boxSizing: 'border-box'
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSaveCustomTag();
+                  }
+                }}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: '8px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                <button 
+                  type="button"
+                  onClick={handleCloseModal}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '4px',
+                    border: '1px solid #ccc',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleSaveCustomTag}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: '#006fbb',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                >
+                  Save Tag
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <ui-titlebar title="Add Custom Tag">
-          <button variant="primary" onClick={handleSaveCustomTag}>Save Tag</button>
-          <button onClick={handleCloseModal}>Cancel</button>
-        </ui-titlebar>
-      </ui-modal>
+      )}
       
     </s-page>
   );
